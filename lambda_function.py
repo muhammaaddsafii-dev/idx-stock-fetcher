@@ -3,9 +3,18 @@ import psycopg2
 import requests
 from datetime import datetime
 import os
+import hashlib
+
 
 # Inisialisasi connection di luar handler untuk connection reuse
 conn = None
+
+
+def generate_stock_id(stock_code, date_obj):
+    """Generate unique stock ID from stock_code and date"""
+    # Format: STOCKCODE_YYYY-MM-DD (contoh: BBCA_2025-11-25)
+    return f"{stock_code}_{date_obj.strftime('%Y-%m-%d')}"
+
 
 def get_db_connection():
     """Reuse database connection across Lambda invocations"""
@@ -30,6 +39,7 @@ def get_db_connection():
         print(f"Connection error: {str(e)}")
         conn = None
         raise
+
 
 def lambda_handler(event, context):
     cursor = None
@@ -58,9 +68,10 @@ def lambda_handler(event, context):
         connection = get_db_connection()
         cursor = connection.cursor()
         
+        # Query INSERT dengan id_stock
         insert_query = """
         INSERT INTO stock_summary (
-            stock_code, date, stock_name, remarks, previous, 
+            id_stock, stock_code, date, stock_name, remarks, previous, 
             open_price, first_trade, high, low, close, change,
             volume, value, frequency, index_individual,
             offer, offer_volume, bid, bid_volume,
@@ -68,12 +79,13 @@ def lambda_handler(event, context):
             foreign_sell, foreign_buy, delisting_date,
             non_regular_volume, non_regular_value, non_regular_frequency
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s
         )
         ON CONFLICT (stock_code, date) 
         DO UPDATE SET
+            id_stock = EXCLUDED.id_stock,
             stock_name = EXCLUDED.stock_name,
             remarks = EXCLUDED.remarks,
             previous = EXCLUDED.previous,
@@ -97,15 +109,19 @@ def lambda_handler(event, context):
         """
         
         inserted_count = 0
-        updated_count = 0
         
         batch_data = []
         for item in data['data']:
             try:
                 date_obj = datetime.strptime(item['Date'], "%Y-%m-%dT%H:%M:%S").date()
+                stock_code = item['StockCode']
+                
+                # Generate id_stock
+                id_stock = generate_stock_id(stock_code, date_obj)
                 
                 batch_data.append((
-                    item['StockCode'],
+                    id_stock,  # Field baru di posisi pertama
+                    stock_code,
                     date_obj,
                     item['StockName'],
                     item.get('Remarks') or None,
@@ -203,33 +219,3 @@ def lambda_handler(event, context):
     finally:
         if cursor:
             cursor.close()
-        # Jangan close connection - biarkan untuk reuse
-
-
-# import json
-# import requests
-
-# def lambda_handler(event, context):
-#     try:
-#         api_url = "https://getidx.geo-circle.workers.dev/"
-#         response = requests.get(api_url)
-#         data = response.json()
-#         print(data)
-
-#         return {
-#             "statusCode": 200,
-#             "body": json.dumps({
-#                 "success": True,
-#                 "data": data
-#             })
-#         }
-
-#     except Exception as e:
-#         return {
-#             "statusCode": 500,
-#             "body": json.dumps({
-#                 "success": False,
-#                 "error": str(e)
-#             })
-#         }
-
